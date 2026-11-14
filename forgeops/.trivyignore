@@ -1,0 +1,2 @@
+# One CVE id per line, each with a reason and a review date. Empty means nothing is accepted.
+# CVE-0000-00000  no fix upstream yet, not reachable from our code; review 2026-12-01

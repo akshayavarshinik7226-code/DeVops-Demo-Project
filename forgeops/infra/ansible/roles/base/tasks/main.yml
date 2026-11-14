@@ -1,0 +1,46 @@
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: [curl, ca-certificates, gnupg, rsync, git, ufw, fail2ban, unattended-upgrades, htop, jq]
+    state: present
+
+- name: Set the time zone to UTC (logs and backups line up)
+  community.general.timezone:
+    name: Etc/UTC
+
+- name: Create the admin user
+  ansible.builtin.user:
+    name: "{{ admin_user }}"
+    groups: [sudo]
+    append: true
+    shell: /bin/bash
+    create_home: true
+
+- name: Admin can log in with their key
+  ansible.posix.authorized_key:
+    user: "{{ admin_user }}"
+    key: "{{ lookup('file', admin_pubkey_file) }}"
+
+- name: The deploy workflow's key can log in too
+  ansible.posix.authorized_key:
+    user: "{{ admin_user }}"
+    key: "{{ lookup('file', deploy_pubkey_file) }}"
+  when: deploy_pubkey_file is defined
+
+- name: Passwordless sudo for the admin user (key-only login, so no password exists)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/90-{{ admin_user }}
+    content: "{{ admin_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    mode: "0440"
+    validate: visudo -cf %s
+
+- name: Add 2 GB swap so a small server survives memory spikes
+  ansible.builtin.shell: |
+    fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  args:
+    creates: /swapfile

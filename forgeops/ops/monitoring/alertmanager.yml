@@ -1,0 +1,24 @@
+# Sends alerts to Telegram. Create a bot with @BotFather, get your chat id, put both below
+# (or use email_configs / slack_configs instead). Keep this file's real values out of Git if it holds a token:
+# store the token on the server and mount it, see docs/SECRETS.md.
+route:
+  receiver: telegram
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: telegram
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/telegram_token
+        chat_id: 123456789   # replace with your chat id
+        send_resolved: true
+        message: |
+          [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})
+          {{ .CommonAnnotations.summary }}
+          Guide: {{ .CommonAnnotations.runbook }}
+
+inhibit_rules:
+  - source_matchers: [alertname="ApiDown"]
+    target_matchers: [alertname=~"HighErrorRate|SlowRequests"]

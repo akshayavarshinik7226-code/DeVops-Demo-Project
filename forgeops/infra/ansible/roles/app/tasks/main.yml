@@ -1,0 +1,42 @@
+- name: Release folders
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ admin_user }}"
+    group: "{{ admin_user }}"
+    mode: "0750"
+  loop:
+    - /opt/forgeops
+    - /opt/forgeops/env
+    - /opt/forgeops/backups
+    - /opt/forgeops/releases
+
+- name: Nightly database backup at 02:15 UTC
+  ansible.builtin.cron:
+    name: forgeops nightly backup
+    user: "{{ admin_user }}"
+    minute: "15"
+    hour: "2"
+    job: "/opt/forgeops/ops/scripts/backup.sh production nightly >> /opt/forgeops/backups/backup.log 2>&1"
+
+- name: Staging backup at 02:45 UTC
+  ansible.builtin.cron:
+    name: forgeops staging backup
+    user: "{{ admin_user }}"
+    minute: "45"
+    hour: "2"
+    job: "/opt/forgeops/ops/scripts/backup.sh staging nightly >> /opt/forgeops/backups/backup.log 2>&1"
+
+- name: Weekly cleanup of old images (keeps anything used in the last 14 days, so rollbacks still work)
+  ansible.builtin.cron:
+    name: forgeops docker prune
+    user: "{{ admin_user }}"
+    special_time: weekly
+    job: "docker image prune -af --filter 'until=336h' >> /opt/forgeops/backups/prune.log 2>&1"
+
+- name: Reminder for the secrets that never come from Git
+  ansible.builtin.debug:
+    msg: >-
+      Server ready. Now create /opt/forgeops/env/production.env and env/staging.env from the
+      .example files (chmod 600), then log the server in to ghcr.io once:
+      echo <PAT with read:packages> | docker login ghcr.io -u <user> --password-stdin

@@ -1,0 +1,36 @@
+# The only public entrance. Caddy gets and renews Let's Encrypt certificates by itself
+# and redirects HTTP to HTTPS automatically.
+# DOMAIN is set in the env file, e.g. 203.0.113.10.sslip.io  (free, works with certificates)
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+	# never expose metrics publicly
+	respond /metrics 404
+	reverse_proxy forgeops-production-web:8080
+	log {
+		output stdout
+		format json
+	}
+}
+
+staging.{$DOMAIN} {
+	encode zstd gzip
+	respond /metrics 404
+	reverse_proxy forgeops-staging-web:8080
+}
+
+status.{$DOMAIN} {
+	reverse_proxy uptime-kuma:3001
+}

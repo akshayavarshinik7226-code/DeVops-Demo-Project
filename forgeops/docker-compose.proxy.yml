@@ -1,0 +1,31 @@
+# Public front door: Caddy on 80/443 with automatic HTTPS. Runs as its own project, shared by
+# production and staging:
+#   docker compose -f docker-compose.proxy.yml --env-file env/production.env -p forgeops-proxy up -d
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in the env file}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in the env file}
+    volumes:
+      - ./ops/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    networks: [edge-shared]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddydata:
+  caddyconfig:
+
+networks:
+  edge-shared:
+    name: forgeops-edge
+    external: true

@@ -1,0 +1,14 @@
+# Added on the server by ops/scripts/*.sh. Joins the web container to the shared "forgeops-edge"
+# network so the Caddy front door (its own compose project) can reach production and staging by name:
+#   forgeops-production-web:8080   forgeops-staging-web:8080
+services:
+  web:
+    networks:
+      backend:
+      edge-shared:
+        aliases: ["${COMPOSE_PROJECT_NAME}-web"]
+
+networks:
+  edge-shared:
+    name: forgeops-edge
+    external: true

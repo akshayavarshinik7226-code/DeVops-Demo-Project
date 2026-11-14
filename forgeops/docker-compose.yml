@@ -1,0 +1,136 @@
+# ForgeOps stack: web (Nginx) -> api (FastAPI) -> postgres + redis, plus the payroll worker.
+#
+#   Local dev:   docker compose up -d --build && docker compose run --rm seed
+#   On a server: ops/scripts/deploy.sh <version> staging|production  (the Deploy workflow runs it)
+#                which adds docker-compose.server.yml so Caddy can reach the web container.
+#
+# Images are tagged with an exact version. Production never uses "latest".
+
+name: ${COMPOSE_PROJECT_NAME:-forgeops}
+
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-dev}
+  APP_VERSION: ${APP_VERSION:-0.0.0-dev}
+  DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://redis:6379/0
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - max_connections=50
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+    logging: *logging
+    # no "ports:" - the database is never reachable from outside Docker
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+    logging: *logging
+
+  api:
+    image: ${REGISTRY:-forgeops}/forgeops-api:${APP_VERSION:-dev}
+    build:
+      context: ./api
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-local}
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      GIT_COMMIT: ${GIT_COMMIT:-local}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 384M }
+
+  worker:
+    image: ${REGISTRY:-forgeops}/forgeops-worker:${APP_VERSION:-dev}
+    build:
+      context: ./worker
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-local}
+    restart: unless-stopped
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [backend]
+    logging: *logging
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 192M }
+
+  web:
+    image: ${REGISTRY:-forgeops}/forgeops-web:${APP_VERSION:-dev}
+    build:
+      context: ./web
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-local}
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_started }
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    networks: [backend]
+    logging: *logging
+
+  # one-off job: docker compose run --rm seed
+  seed:
+    image: ${REGISTRY:-forgeops}/forgeops-api:${APP_VERSION:-dev}
+    profiles: ["tools"]
+    environment: *app-env
+    volumes:
+      - ./seed:/seed:ro
+    command: ["python", "/seed/seed.py"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  backend:

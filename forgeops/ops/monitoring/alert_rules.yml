@@ -1,0 +1,56 @@
+# Every alert has a "first three checks" guide in docs/ALERTS.md.
+groups:
+  - name: forgeops
+    rules:
+      - alert: ApiDown
+        expr: up{job="api"} == 0
+        for: 1m              # stopping the API alerts within 2 minutes (1m + scrape + eval)
+        labels: { severity: critical }
+        annotations:
+          summary: "API is not answering Prometheus scrapes"
+          runbook: "docs/ALERTS.md#apidown"
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(api_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(api_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 5% of API requests are failing (5xx)"
+          runbook: "docs/ALERTS.md#higherrorrate"
+
+      - alert: SlowRequests
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(api_request_seconds_bucket[5m]))) > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 API latency is above 500 ms"
+          runbook: "docs/ALERTS.md#slowrequests"
+
+      - alert: DiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"}
+            / node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"} < 0.15
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Less than 15% disk left on {{ $labels.instance }}"
+          runbook: "docs/ALERTS.md#diskspacelow"
+
+      - alert: HighMemory
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.9
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Server memory above 90%"
+          runbook: "docs/ALERTS.md#highmemory"
+
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "PostgreSQL is not reachable"
+          runbook: "docs/ALERTS.md#postgresdown"

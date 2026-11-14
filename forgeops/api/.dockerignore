@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+tests
+*.db
+requirements-dev.txt
+Dockerfile

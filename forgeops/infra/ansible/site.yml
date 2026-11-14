@@ -1,0 +1,11 @@
+# Configures a fresh Ubuntu 22.04/24.04 server for ForgeOps. Safe to run twice (idempotent).
+#   cd infra/ansible && ansible-playbook site.yml
+# KEEP A SECOND SSH SESSION OPEN the first time you run this: it changes SSH settings.
+- name: ForgeOps server
+  hosts: forgeops
+  become: true
+  roles:
+    - base
+    - hardening
+    - docker
+    - app

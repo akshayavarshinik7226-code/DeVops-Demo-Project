@@ -1,0 +1,115 @@
+# Monitoring add-on: Prometheus, Grafana, Loki + Promtail, Alertmanager, exporters and Uptime Kuma.
+#   ops/scripts/monitoring.sh up      (production server)
+# Nothing here is published to the internet. Grafana and Prometheus bind to 127.0.0.1 only:
+#   ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 deploy@your-server
+# Uptime Kuma (status page) is served publicly through Caddy at status.<domain>.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./ops/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - promdata:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    networks: [backend]
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./ops/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./ops/monitoring/telegram_token:/etc/alertmanager/telegram_token:ro   # create on the server, chmod 600
+    ports: ["127.0.0.1:9093:9093"]
+    networks: [backend]
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:12.0.2
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in the env file}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./ops/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [backend]
+    logging: *logging
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    command: ["--path.rootfs=/host"]
+    pid: host
+    volumes: ["/:/host:ro,rslave"]
+    networks: [backend]
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks: [backend]
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    networks: [backend]
+
+  loki:
+    image: grafana/loki:3.5.1
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ./ops/monitoring/loki.yml:/etc/loki/config.yml:ro
+      - lokidata:/loki
+    networks: [backend]
+    logging: *logging
+
+  promtail:
+    image: grafana/promtail:3.5.1
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./ops/monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [backend]
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1.23.16
+    restart: unless-stopped
+    volumes: ["kumadata:/app/data"]
+    ports: ["127.0.0.1:3001:3001"]
+    networks:
+      backend:
+      edge-shared:
+        aliases: [uptime-kuma]
+    logging: *logging
+
+volumes:
+  promdata:
+  grafanadata:
+  lokidata:
+  kumadata:

@@ -1,0 +1,74 @@
+# The ONLY way production changes. Run it from Actions > Deploy > Run workflow.
+# The "production" environment has required reviewers (Settings > Environments), so a person approves first.
+#
+# Repository secrets needed:
+#   DEPLOY_HOST   server IP or name
+#   DEPLOY_USER   e.g. deploy
+#   DEPLOY_SSH_KEY  private key of a key pair whose public half is in the server's authorized_keys
+#   DEPLOY_KNOWN_HOSTS  output of: ssh-keyscan -H <server>
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image tag to deploy, e.g. v1.0.0 or sha-1a2b3c4"
+        required: true
+      environment:
+        description: "Where to deploy"
+        type: choice
+        options: [staging, production]
+        default: staging
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ inputs.environment == 'production' && vars.PUBLIC_URL || vars.STAGING_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the images exist
+        run: |
+          for s in api worker web; do
+            docker manifest inspect ghcr.io/${{ github.repository_owner }}/forgeops-$s:${{ inputs.version }} > /dev/null \
+              || { echo "image forgeops-$s:${{ inputs.version }} not found"; exit 1; }
+          done
+
+      - name: Set up SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Copy release files (compose, scripts, configs, seed)
+        run: |
+          rsync -az --delete-after \
+            --include='docker-compose*.yml' --include='ops/***' --include='seed/***' --include='env/' --include='env/*.example' \
+            --exclude='*' \
+            ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/forgeops/
+
+      - name: Deploy ${{ inputs.version }} to ${{ inputs.environment }}
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            "cd /opt/forgeops && GIT_COMMIT=${{ github.sha }} ops/scripts/deploy.sh '${{ inputs.version }}' '${{ inputs.environment }}'"
+
+      - name: Smoke test the public address
+        if: vars.PUBLIC_URL != '' || vars.STAGING_URL != ''
+        run: ops/scripts/smoke.sh "${{ inputs.environment == 'production' && vars.PUBLIC_URL || vars.STAGING_URL }}"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### ${{ inputs.environment }}: ${{ inputs.version }} (${{ job.status }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "Approved and run by @${{ github.actor }} from commit ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
